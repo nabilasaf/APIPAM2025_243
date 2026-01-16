@@ -26,38 +26,53 @@ exports.createSimultaneousData = async (req, res) => {
         kode_mk, nama_mk, sks, 
         nip_nik, nama_dosen, jabatan 
     } = req.body;
-    
-    const input_by_email = req.user.email; 
+
+    const input_by_email = req.user.email;
+    const connection = await pool.getConnection();
 
     try {
-        // Insert ke tabel transaksi_master terlebih dahulu
-        const [masterResult] = await pool.execute(
-            'INSERT INTO transaksi_master (input_by_email) VALUES (?)', 
+        await connection.beginTransaction();
+
+        const [masterResult] = await connection.execute(
+            'INSERT INTO transaksi_master (input_by_email) VALUES (?)',
             [input_by_email]
         );
         const id_master = masterResult.insertId;
 
-        // Insert ke tabel
-        await Promise.all([
-            pool.execute(
-                'INSERT INTO asisten_dosen (id_master, nim, nama_lengkap, status_aktif_asdos) VALUES (?, ?, ?, ?)',
-                [id_master, nim, nama_lengkap, 1] 
-            ),
-            pool.execute(
-                'INSERT INTO mata_kuliah (id_master, kode_mk, nama_mk, sks) VALUES (?, ?, ?, ?)',
-                [id_master, kode_mk, nama_mk, sks]
-            ),
-            pool.execute(
-                'INSERT INTO dosen_koordinator (id_master, nip_nik, nama_dosen, jabatan) VALUES (?, ?, ?, ?)',
-                [id_master, nip_nik, nama_dosen, jabatan]
-            )
-        ]);
+        await connection.execute(
+            'INSERT INTO asisten_dosen (id_master, nim, nama_lengkap, status_aktif_asdos) VALUES (?, ?, ?, ?)',
+            [id_master, nim, nama_lengkap, 1]
+        );
 
+        await connection.execute(
+            'INSERT INTO mata_kuliah (id_master, kode_mk, nama_mk, sks) VALUES (?, ?, ?, ?)',
+            [id_master, kode_mk, nama_mk, sks]
+        );
+
+        await connection.execute(
+            'INSERT INTO dosen_koordinator (id_master, nip_nik, nama_dosen, jabatan) VALUES (?, ?, ?, ?)',
+            [id_master, nip_nik, nama_dosen, jabatan]
+        );
+
+        await connection.commit();
         res.status(201).json({ message: "Data berhasil disimpan ke semua tabel." });
+
     } catch (error) {
-        res.status(500).json({ message: "Gagal simpan", error: error.message }); 
+        await connection.rollback();
+
+        if (error.code === 'ER_DUP_ENTRY') {
+            return res.status(400).json({
+                message: 'NIM sudah terdaftar. Gunakan NIM lain.'
+            });
+        }
+
+        res.status(500).json({ message: "Gagal simpan", error: error.message });
+
+    } finally {
+        connection.release();
     }
 };
+
 
 // READ ALL
 exports.findAllSimultaneousData = async (req, res) => {
