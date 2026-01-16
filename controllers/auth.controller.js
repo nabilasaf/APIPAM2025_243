@@ -1,24 +1,51 @@
 const pool = require('../config/db.config');
 const jwt = require('jsonwebtoken');
-const bcrypt = require('bcrypt'); 
+const bcrypt = require('bcrypt');
+
 const JWT_SECRET = process.env.JWT_SECRET;
 
 exports.login = async (req, res) => {
-    let { email, password } = req.body;
+    const { email, password } = req.body;
 
-    email = email.toLowerCase(); // normalisasi email
+    if (!email || !password) {
+        return res.status(400).json({ message: 'Email dan password wajib diisi.' });
+    }
 
     try {
+        console.log('=== LOGIN ATTEMPT ===');
+        console.log('Input email:', `"${email}"`);
+
+        // Menggunakan BINARY untuk case-sensitive comparison di SQL
         const [rows] = await pool.execute(
-            'SELECT email, nama_staff, password_hash FROM staff_tu WHERE email = ?',
+            'SELECT email, nama_staff, password_hash FROM staff_tu WHERE BINARY email = ?',
             [email]
         );
 
+        console.log('Query results:', rows.length, 'row(s) found');
+
         if (rows.length === 0) {
+            console.log('❌ Email tidak ditemukan (BINARY check failed)');
             return res.status(401).json({ message: 'Email atau password salah.' });
         }
 
         const user = rows[0];
+
+        console.log('Database email:', `"${user.email}"`);
+        console.log('Input email:   ', `"${email}"`);
+        console.log('Exact match?:', user.email === email);
+
+        // DOUBLE CHECK: Validasi case-sensitive di JavaScript juga
+        // Ini untuk memastikan meskipun BINARY di SQL tidak bekerja
+        if (user.email !== email) {
+            console.log('❌ Email tidak match persis (JavaScript validation failed)');
+            console.log('   Database:', user.email);
+            console.log('   Input:   ', email);
+            return res.status(401).json({ message: 'Email atau password salah.' });
+        }
+
+        console.log('✅ Email match persis!');
+        console.log('===================');
+
         const isMatch = await bcrypt.compare(password, user.password_hash);
 
         if (!isMatch) {
@@ -34,31 +61,16 @@ exports.login = async (req, res) => {
         res.status(200).json({
             message: 'Login berhasil',
             token,
-            user: user.nama_staff
+            user: {
+                email: user.email,
+                nama_staff: user.nama_staff
+            }
         });
+
     } catch (error) {
-        res.status(500).json({ message: 'Server Error saat Login.', error: error.message });
-    }
-};
-
-exports.getProfile = async (req, res) => {
-    const emailFromToken = req.user.email; 
-
-    try {
-        const [rows] = await pool.execute(
-            'SELECT email, nama_staff FROM staff_tu WHERE email = ?', 
-            [emailFromToken]
-        );
-
-        if (rows.length === 0) {
-            return res.status(404).json({ message: 'User tidak ditemukan.' });
-        }
-
-        res.status(200).json({
-            email: rows[0].email, 
-            nama_staff: rows[0].nama_staff 
+        res.status(500).json({
+            message: 'Server error saat login.',
+            error: error.message
         });
-    } catch (error) {
-        res.status(500).json({ message: 'Gagal mengambil profil.', error: error.message });
     }
 };
